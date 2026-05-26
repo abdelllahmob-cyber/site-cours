@@ -2,13 +2,16 @@ import { initializeApp }    from "https://www.gstatic.com/firebasejs/10.12.0/fir
 import { getFirestore, collection, getDocs, doc, addDoc, updateDoc,
          deleteDoc, getDoc, query, orderBy, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { FIREBASE_CONFIG, SITE_NAME } from './config.js';
 
-const app  = initializeApp(FIREBASE_CONFIG);
-const db   = getFirestore(app);
-const auth = getAuth(app);
+const app = initializeApp(FIREBASE_CONFIG);
+const db  = getFirestore(app);
+
+// ────────────────────────────────────────────
+// كلمة المرور — مول السيت
+// ────────────────────────────────────────────
+const OWNER_PASSWORD = 'سبع';
+const SESSION_KEY    = 'admin_auth_ok';
 
 // ────────────────────────────────────────────
 // HELPERS
@@ -43,38 +46,62 @@ function showModal(html) {
 function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
 
 // ────────────────────────────────────────────
-// AUTH
+// AUTH — كلمة مرور محلية
 // ────────────────────────────────────────────
-document.getElementById('authBtn').addEventListener('click', async () => {
-  const email = document.getElementById('adminEmail').value.trim();
-  const pass  = document.getElementById('adminPass').value;
-  const btn   = document.getElementById('authBtn');
-  const err   = document.getElementById('authErr');
-  if (!email || !pass) { err.innerHTML = '<div class="alert alert-error">Remplissez tous les champs.</div>'; return; }
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-  try {
-    await signInWithEmailAndPassword(auth, email, pass);
-  } catch(e) {
-    err.innerHTML = '<div class="alert alert-error">Email ou mot de passe incorrect.</div>';
-    btn.disabled = false; btn.innerHTML = 'Se connecter';
+function showAdminPanel() {
+  document.getElementById('authModal').style.display = 'none';
+  document.getElementById('adminApp').style.display  = 'flex';
+  document.getElementById('adminEmailDisplay').textContent = '👑 مول السيت';
+  initAdmin();
+}
+
+function showLoginScreen(errMsg) {
+  document.getElementById('authModal').style.display = 'flex';
+  document.getElementById('adminApp').style.display  = 'none';
+  if (errMsg) {
+    document.getElementById('authErr').innerHTML =
+      `<div class="alert alert-error">${errMsg}</div>`;
+  }
+}
+
+// تحقق من الجلسة عند التحميل
+if (sessionStorage.getItem(SESSION_KEY) === '1') {
+  showAdminPanel();
+} else {
+  showLoginScreen();
+}
+
+document.getElementById('authBtn').addEventListener('click', () => {
+  const pass = document.getElementById('adminPass').value;
+  const btn  = document.getElementById('authBtn');
+  if (!pass) {
+    document.getElementById('authErr').innerHTML =
+      '<div class="alert alert-error">أدخل كلمة المرور.</div>';
+    return;
+  }
+  if (pass === OWNER_PASSWORD) {
+    sessionStorage.setItem(SESSION_KEY, '1');
+    btn.innerHTML = '✅';
+    setTimeout(() => showAdminPanel(), 300);
+  } else {
+    btn.disabled = true;
+    document.getElementById('authErr').innerHTML =
+      '<div class="alert alert-error">❌ كلمة المرور غلط. عاود حاول.</div>';
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = 'دخول 🚀';
+    }, 1500);
   }
 });
+
 document.getElementById('adminPass').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('authBtn').click();
 });
 
-document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
-
-onAuthStateChanged(auth, user => {
-  if (user) {
-    document.getElementById('authModal').style.display  = 'none';
-    document.getElementById('adminApp').style.display   = 'flex';
-    document.getElementById('adminEmailDisplay').textContent = user.email;
-    initAdmin();
-  } else {
-    document.getElementById('authModal').style.display  = 'flex';
-    document.getElementById('adminApp').style.display   = 'none';
-  }
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  sessionStorage.removeItem(SESSION_KEY);
+  showLoginScreen();
+  document.getElementById('adminPass').value = '';
 });
 
 // ────────────────────────────────────────────
