@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Accès — Cours</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>"/>
+</head>
+<body>
+
+<div class="login-page">
+
+  <div id="loading" class="loading-page">
+    <div class="spinner"></div>
+    <p>Chargement…</p>
+  </div>
+
+  <div id="loginCard" class="login-card" style="display:none">
+    <div class="login-logo">
+      <div class="logo-icon">🎓</div>
+      <h1 id="siteTitleEl">Plateforme de Cours</h1>
+      <p>Entrez votre code d'accès pour continuer</p>
+    </div>
+
+    <div class="login-form">
+      <div class="code-input">
+        <input type="text" id="codeInput" placeholder="Code d'accès" maxlength="20"
+               autocomplete="off" autocapitalize="characters" spellcheck="false"/>
+      </div>
+      <button class="btn btn-primary login-btn" id="loginBtn">
+        Accéder au cours
+      </button>
+      <div id="msgBox"></div>
+    </div>
+
+    <div class="admin-link">
+      <a href="admin.html">Espace administrateur →</a>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, query, where, getDocs,
+         doc, getDoc, updateDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { FIREBASE_CONFIG, SITE_NAME } from './js/config.js';
+
+const app = initializeApp(FIREBASE_CONFIG);
+const db  = getFirestore(app);
+
+document.getElementById('siteTitleEl').textContent = SITE_NAME;
+
+// ── device fingerprint (stored in localStorage permanently) ──
+function getDeviceId() {
+  let id = localStorage.getItem('_did');
+  if (!id) {
+    id = 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    localStorage.setItem('_did', id);
+  }
+  return id;
+}
+
+function randToken() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(24)))
+    .map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function showMsg(text, type = 'error') {
+  document.getElementById('msgBox').innerHTML =
+    `<div class="alert alert-${type}">${text}</div>`;
+}
+
+// ── check existing session ──
+async function checkSession() {
+  const codeId = localStorage.getItem('_cid');
+  const token  = localStorage.getItem('_tok');
+  if (!codeId || !token) return false;
+  try {
+    const snap = await getDoc(doc(db, 'codes', codeId));
+    if (snap.exists() && snap.data().active && snap.data().sessionToken === token) {
+      location.href = 'cours.html';
+      return true;
+    }
+  } catch(_) {}
+  ['_cid','_tok','_code'].forEach(k => localStorage.removeItem(k));
+  return false;
+}
+
+// ── login ──
+async function doLogin() {
+  const raw  = document.getElementById('codeInput').value.trim().toUpperCase();
+  const btn  = document.getElementById('loginBtn');
+  if (!raw) { showMsg('Veuillez entrer votre code d\'accès.'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Vérification…';
+  document.getElementById('msgBox').innerHTML = '';
+
+  try {
+    const q    = query(collection(db,'codes'), where('code','==',raw), where('active','==',true));
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      showMsg('Code invalide ou désactivé. Vérifiez et réessayez.');
+      return;
+    }
+
+    const codeDoc  = snap.docs[0];
+    const data     = codeDoc.data();
+    const deviceId = getDeviceId();
+
+    if (data.used) {
+      if (data.deviceId === deviceId) {
+        // same device → restore session
+        localStorage.setItem('_cid',  codeDoc.id);
+        localStorage.setItem('_tok',  data.sessionToken);
+        localStorage.setItem('_code', raw);
+        location.href = 'cours.html';
+      } else {
+        showMsg('Ce code est déjà utilisé sur un autre appareil. Chaque code ne peut être activé que par une seule personne.');
+      }
+      return;
+    }
+
+    // first activation
+    const token = randToken();
+    await updateDoc(doc(db,'codes',codeDoc.id), {
+      used: true, sessionToken: token,
+      deviceId, usedAt: serverTimestamp()
+    });
+    localStorage.setItem('_cid',  codeDoc.id);
+    localStorage.setItem('_tok',  token);
+    localStorage.setItem('_code', raw);
+    location.href = 'cours.html';
+
+  } catch(e) {
+    console.error(e);
+    showMsg('Erreur de connexion. Vérifiez votre connexion internet.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Accéder au cours';
+  }
+}
+
+// ── init ──
+const already = await checkSession();
+if (!already) {
+  document.getElementById('loading').style.display  = 'none';
+  document.getElementById('loginCard').style.display = 'block';
+
+  document.getElementById('loginBtn').addEventListener('click', doLogin);
+  document.getElementById('codeInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('codeInput').addEventListener('input', e => {
+    const { selectionStart: s, selectionEnd: en } = e.target;
+    e.target.value = e.target.value.toUpperCase();
+    e.target.setSelectionRange(s, en);
+  });
+}
+</script>
+</body>
+</html>

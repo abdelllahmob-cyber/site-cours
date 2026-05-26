@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cours</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"/>
+</head>
+<body>
+
+<div id="loading" class="loading-page">
+  <div class="spinner"></div>
+  <p>Chargement…</p>
+</div>
+
+<div id="app" class="course-layout" style="display:none">
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-header-info">
+        <h2 id="siteNameEl">Cours</h2>
+        <p>Programme</p>
+      </div>
+    </div>
+    <nav class="sidebar-nav" id="sidebarNav"></nav>
+  </div>
+
+  <!-- ── Main content ── -->
+  <div class="course-main">
+    <div class="course-header">
+      <h1 id="headerTitle">Sélectionnez une leçon</h1>
+      <button class="btn btn-secondary btn-sm" id="logoutBtn">Déconnexion</button>
+    </div>
+    <div class="course-body" id="courseBody">
+      <div class="no-lesson">
+        <div class="nl-icon">📚</div>
+        <h3>Bienvenue !</h3>
+        <p>Sélectionnez une leçon dans le menu pour commencer.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="js/cours.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

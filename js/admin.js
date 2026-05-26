@@ -1,0 +1,660 @@
+import { initializeApp }    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, doc, addDoc, updateDoc,
+         deleteDoc, getDoc, query, orderBy, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { FIREBASE_CONFIG, SITE_NAME } from './config.js';
+
+const app  = initializeApp(FIREBASE_CONFIG);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+// ────────────────────────────────────────────
+// HELPERS
+// ────────────────────────────────────────────
+function esc(s) {
+  return String(s||'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function uuid() {
+  return (crypto.randomUUID ? crypto.randomUUID()
+    : 'id_' + Date.now().toString(36) + Math.random().toString(36).slice(2));
+}
+function genCode() {
+  const ch = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (let i = 0; i < 8; i++) c += ch[Math.floor(Math.random() * ch.length)];
+  return c.slice(0,4) + '-' + c.slice(4);
+}
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function showModal(html) {
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = html;
+  root.querySelector('.modal-overlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+}
+function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
+
+// ────────────────────────────────────────────
+// AUTH
+// ────────────────────────────────────────────
+document.getElementById('authBtn').addEventListener('click', async () => {
+  const email = document.getElementById('adminEmail').value.trim();
+  const pass  = document.getElementById('adminPass').value;
+  const btn   = document.getElementById('authBtn');
+  const err   = document.getElementById('authErr');
+  if (!email || !pass) { err.innerHTML = '<div class="alert alert-error">Remplissez tous les champs.</div>'; return; }
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch(e) {
+    err.innerHTML = '<div class="alert alert-error">Email ou mot de passe incorrect.</div>';
+    btn.disabled = false; btn.innerHTML = 'Se connecter';
+  }
+});
+document.getElementById('adminPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('authBtn').click();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
+
+onAuthStateChanged(auth, user => {
+  if (user) {
+    document.getElementById('authModal').style.display  = 'none';
+    document.getElementById('adminApp').style.display   = 'flex';
+    document.getElementById('adminEmailDisplay').textContent = user.email;
+    initAdmin();
+  } else {
+    document.getElementById('authModal').style.display  = 'flex';
+    document.getElementById('adminApp').style.display   = 'none';
+  }
+});
+
+// ────────────────────────────────────────────
+// TABS
+// ────────────────────────────────────────────
+document.querySelectorAll('.admin-nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.admin-nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById('tab-' + item.dataset.tab).classList.add('active');
+    if (item.dataset.tab === 'dashboard') loadDashboard();
+    if (item.dataset.tab === 'codes')     loadCodes();
+    if (item.dataset.tab === 'courses')   showCourseList();
+  });
+});
+
+function initAdmin() {
+  loadDashboard();
+  loadCodes();
+  showCourseList();
+  document.getElementById('addCodeBtn').addEventListener('click', showAddCodeModal);
+  document.getElementById('genMultiBtn').addEventListener('click', showGenMultiModal);
+}
+
+// ────────────────────────────────────────────
+// DASHBOARD
+// ────────────────────────────────────────────
+async function loadDashboard() {
+  const codesSnap   = await getDocs(collection(db,'codes'));
+  const coursesSnap = await getDocs(collection(db,'courses'));
+
+  const codes   = codesSnap.docs.map(d => ({ id:d.id, ...d.data() }));
+  const total   = codes.length;
+  const active  = codes.filter(c => c.active).length;
+  const used    = codes.filter(c => c.used).length;
+  const lessons = coursesSnap.docs.reduce((n,d) => {
+    const chs = d.data().chapters || [];
+    return n + chs.reduce((m,ch) => m + (ch.lessons||[]).length, 0);
+  }, 0);
+
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Total codes</div></div>
+    <div class="stat-card"><div class="stat-val">${active}</div><div class="stat-lbl">Codes actifs</div></div>
+    <div class="stat-card"><div class="stat-val">${used}</div><div class="stat-lbl">Codes utilisés</div></div>
+    <div class="stat-card"><div class="stat-val">${lessons}</div><div class="stat-lbl">Leçons</div></div>`;
+
+  const recent = codes.slice(-8).reverse();
+  document.getElementById('recentCodesTable').innerHTML = recent.length ? `
+    <table>
+      <thead><tr><th>Code</th><th>Label</th><th>Statut</th><th>Utilisé le</th></tr></thead>
+      <tbody>
+        ${recent.map(c => `
+          <tr>
+            <td><span class="code-mono">${esc(c.code)}</span></td>
+            <td>${esc(c.label||'—')}</td>
+            <td>${statusBadge(c)}</td>
+            <td>${fmtDate(c.usedAt)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>` : '<div class="empty-state"><div class="ei">🔑</div><p>Aucun code créé.</p></div>';
+}
+
+function statusBadge(c) {
+  if (!c.active) return '<span class="badge badge-off">Désactivé</span>';
+  if (c.used)    return '<span class="badge badge-used">Utilisé</span>';
+  return '<span class="badge badge-free">Disponible</span>';
+}
+
+// ────────────────────────────────────────────
+// CODES
+// ────────────────────────────────────────────
+async function loadCodes() {
+  const snap  = await getDocs(query(collection(db,'codes'), orderBy('createdAt','desc')));
+  const codes = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  const tbody = document.getElementById('codesBody');
+
+  if (!codes.length) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="ei">🔑</div><p>Aucun code. Créez-en un !</p></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = codes.map(c => `
+    <tr>
+      <td><span class="code-mono">${esc(c.code)}</span></td>
+      <td>${esc(c.label||'—')}</td>
+      <td>${statusBadge(c)}</td>
+      <td style="font-size:.8rem;color:var(--text2)">${fmtDate(c.usedAt)}</td>
+      <td>
+        <div class="td-actions">
+          ${c.active
+            ? `<button class="btn btn-danger btn-sm" onclick="revokeCode('${c.id}')">Révoquer</button>`
+            : `<button class="btn btn-success btn-sm" onclick="reactivateCode('${c.id}')">Réactiver</button>`}
+          <button class="btn btn-secondary btn-sm" onclick="deleteCode('${c.id}')">Supprimer</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+window.revokeCode = async (id) => {
+  if (!confirm('Révoquer ce code ? Le client sera déconnecté immédiatement.')) return;
+  await updateDoc(doc(db,'codes',id), { active: false });
+  loadCodes(); loadDashboard();
+};
+window.reactivateCode = async (id) => {
+  await updateDoc(doc(db,'codes',id), { active: true });
+  loadCodes(); loadDashboard();
+};
+window.deleteCode = async (id) => {
+  if (!confirm('Supprimer définitivement ce code ?')) return;
+  await deleteDoc(doc(db,'codes',id));
+  loadCodes(); loadDashboard();
+};
+
+function showAddCodeModal() {
+  const suggestedCode = genCode();
+  showModal(`
+    <div class="modal-overlay">
+      <div class="modal modal-sm">
+        <h3>🔑 Nouveau code d'accès</h3>
+        <div class="form-group">
+          <label>Code (généré automatiquement, modifiable)</label>
+          <input type="text" id="newCodeVal" value="${suggestedCode}"
+            maxlength="20" style="font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:2px;text-transform:uppercase"/>
+        </div>
+        <div class="form-group">
+          <label>Label / Nom du client (optionnel)</label>
+          <input type="text" id="newCodeLabel" placeholder="ex: Ahmed M."/>
+        </div>
+        <div id="addCodeErr"></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+          <button class="btn btn-primary" id="saveCodeBtn">Créer</button>
+        </div>
+      </div>
+    </div>`);
+
+  document.getElementById('newCodeVal').addEventListener('input', e => {
+    e.target.value = e.target.value.toUpperCase();
+  });
+  document.getElementById('saveCodeBtn').addEventListener('click', async () => {
+    const code  = document.getElementById('newCodeVal').value.trim().toUpperCase();
+    const label = document.getElementById('newCodeLabel').value.trim();
+    if (!code) { document.getElementById('addCodeErr').innerHTML = '<div class="alert alert-error">Le code ne peut pas être vide.</div>'; return; }
+    const btn = document.getElementById('saveCodeBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    await addDoc(collection(db,'codes'), {
+      code, label, active: true, used: false,
+      sessionToken: null, deviceId: null, usedAt: null, createdAt: serverTimestamp()
+    });
+    closeModal(); loadCodes(); loadDashboard();
+  });
+}
+
+function showGenMultiModal() {
+  showModal(`
+    <div class="modal-overlay">
+      <div class="modal modal-sm">
+        <h3>⚡ Générer plusieurs codes</h3>
+        <div class="form-group">
+          <label>Nombre de codes à générer</label>
+          <input type="number" id="genCount" value="5" min="1" max="50"/>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+          <button class="btn btn-primary" id="genBtn">Générer</button>
+        </div>
+      </div>
+    </div>`);
+
+  document.getElementById('genBtn').addEventListener('click', async () => {
+    const n   = parseInt(document.getElementById('genCount').value) || 5;
+    const btn = document.getElementById('genBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Génération…';
+    const promises = Array.from({length: Math.min(n, 50)}, () =>
+      addDoc(collection(db,'codes'), {
+        code: genCode(), label: '', active: true, used: false,
+        sessionToken: null, deviceId: null, usedAt: null, createdAt: serverTimestamp()
+      })
+    );
+    await Promise.all(promises);
+    closeModal(); loadCodes(); loadDashboard();
+  });
+}
+
+window.closeModal = closeModal;
+
+// ────────────────────────────────────────────
+// COURSES — state machine
+// ────────────────────────────────────────────
+// state: { view: 'list'|'chapters'|'lessons'|'lesson', courseId, chapterId, lessonId }
+let state = { view: 'list', courseId: null, chapterId: null, lessonId: null };
+let coursesCache = {};
+
+async function getCourse(id) {
+  const snap = await getDoc(doc(db,'courses',id));
+  if (!snap.exists()) return null;
+  const d = { id: snap.id, ...snap.data() };
+  coursesCache[id] = d;
+  return d;
+}
+
+async function showCourseList() {
+  state = { view: 'list', courseId: null, chapterId: null, lessonId: null };
+  document.getElementById('coursePageTitle').textContent = 'Cours';
+  document.getElementById('breadcrumb').style.display = 'none';
+  document.getElementById('coursePageActions').innerHTML =
+    `<button class="btn btn-primary" id="addCourseBtn">+ Ajouter un cours</button>`;
+  document.getElementById('addCourseBtn').addEventListener('click', showAddCourseModal);
+
+  const snap   = await getDocs(query(collection(db,'courses'), orderBy('order')));
+  const courses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const view   = document.getElementById('coursesView');
+
+  if (!courses.length) {
+    view.innerHTML = '<div class="empty-state"><div class="ei">📚</div><p>Aucun cours. Créez-en un !</p></div>';
+    return;
+  }
+
+  view.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Titre du cours</th><th>Chapitres</th><th>Leçons</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${courses.map(c => {
+            const chs = c.chapters||[];
+            const lsn = chs.reduce((n,ch) => n + (ch.lessons||[]).length, 0);
+            return `
+              <tr>
+                <td style="color:var(--text3)">${c.order||1}</td>
+                <td><strong>${esc(c.title)}</strong>${c.description ? `<br><span style="font-size:.8rem;color:var(--text2)">${esc(c.description)}</span>` : ''}</td>
+                <td>${chs.length}</td>
+                <td>${lsn}</td>
+                <td>
+                  <div class="td-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="openCourse('${c.id}')">Gérer</button>
+                    <button class="btn btn-danger btn-sm"    onclick="deleteCourse('${c.id}')">Supprimer</button>
+                  </div>
+                </td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+window.openCourse = async (courseId) => {
+  state = { view: 'chapters', courseId, chapterId: null, lessonId: null };
+  const course = await getCourse(courseId);
+  if (!course) return;
+
+  document.getElementById('coursePageTitle').textContent = course.title;
+  document.getElementById('coursePageActions').innerHTML =
+    `<button class="btn btn-primary" id="addChBtn">+ Ajouter un chapitre</button>`;
+  document.getElementById('addChBtn').addEventListener('click', () => showAddChapterModal(courseId));
+
+  setBreadcrumb([
+    { label: 'Cours', action: 'showCourseList()' },
+    { label: esc(course.title) }
+  ]);
+
+  const chapters = (course.chapters||[]).slice().sort((a,b) => a.order - b.order);
+  const view = document.getElementById('coursesView');
+
+  if (!chapters.length) {
+    view.innerHTML = '<div class="empty-state"><div class="ei">📑</div><p>Aucun chapitre. Ajoutez-en un !</p></div>';
+    return;
+  }
+
+  view.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Titre du chapitre</th><th>Leçons</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${chapters.map(ch => `
+            <tr>
+              <td style="color:var(--text3)">${ch.order}</td>
+              <td><strong>${esc(ch.title)}</strong></td>
+              <td>${(ch.lessons||[]).length}</td>
+              <td>
+                <div class="td-actions">
+                  <button class="btn btn-secondary btn-sm" onclick="openChapter('${courseId}','${ch.id}')">Gérer</button>
+                  <button class="btn btn-danger btn-sm"    onclick="deleteChapter('${courseId}','${ch.id}')">Supprimer</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+};
+
+window.openChapter = async (courseId, chapterId) => {
+  state = { view: 'lessons', courseId, chapterId, lessonId: null };
+  const course  = await getCourse(courseId);
+  const chapter = course?.chapters?.find(c => c.id === chapterId);
+  if (!chapter) return;
+
+  document.getElementById('coursePageTitle').textContent = chapter.title;
+  document.getElementById('coursePageActions').innerHTML =
+    `<button class="btn btn-primary" id="addLsnBtn">+ Ajouter une leçon</button>`;
+  document.getElementById('addLsnBtn').addEventListener('click', () => showLessonEditor(courseId, chapterId, null));
+
+  setBreadcrumb([
+    { label: 'Cours', action: 'showCourseList()' },
+    { label: esc(course.title), action: `openCourse('${courseId}')` },
+    { label: esc(chapter.title) }
+  ]);
+
+  const lessons = (chapter.lessons||[]).slice().sort((a,b) => a.order - b.order);
+  const view = document.getElementById('coursesView');
+
+  if (!lessons.length) {
+    view.innerHTML = '<div class="empty-state"><div class="ei">🎬</div><p>Aucune leçon. Ajoutez-en une !</p></div>';
+    return;
+  }
+
+  view.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Titre de la leçon</th><th>Vidéo</th><th>Codes</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${lessons.map(l => `
+            <tr>
+              <td style="color:var(--text3)">${l.order}</td>
+              <td><strong>${esc(l.title)}</strong></td>
+              <td>${l.videoUrl ? '<span class="badge badge-on">✓ Oui</span>' : '<span class="badge badge-off">Non</span>'}</td>
+              <td>${(l.codeSnippets||[]).length}</td>
+              <td>
+                <div class="td-actions">
+                  <button class="btn btn-secondary btn-sm" onclick="showLessonEditor('${courseId}','${chapterId}','${l.id}')">Modifier</button>
+                  <button class="btn btn-danger btn-sm"    onclick="deleteLesson('${courseId}','${chapterId}','${l.id}')">Supprimer</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+};
+
+// ── lesson editor ──
+window.showLessonEditor = async (courseId, chapterId, lessonId) => {
+  const course  = await getCourse(courseId);
+  const chapter = course?.chapters?.find(c => c.id === chapterId);
+  let lesson    = lessonId ? chapter?.lessons?.find(l => l.id === lessonId) : null;
+
+  const isNew = !lesson;
+  if (isNew) lesson = { id: uuid(), title: '', order: (chapter?.lessons?.length||0) + 1, videoUrl: '', description: '', codeSnippets: [] };
+
+  document.getElementById('coursePageTitle').textContent = isNew ? 'Nouvelle leçon' : 'Modifier la leçon';
+  document.getElementById('coursePageActions').innerHTML = '';
+
+  setBreadcrumb([
+    { label: 'Cours',              action: 'showCourseList()' },
+    { label: esc(course.title),    action: `openCourse('${courseId}')` },
+    { label: esc(chapter.title),   action: `openChapter('${courseId}','${chapterId}')` },
+    { label: isNew ? 'Nouvelle leçon' : esc(lesson.title) }
+  ]);
+
+  const snips = (lesson.codeSnippets||[]);
+
+  document.getElementById('coursesView').innerHTML = `
+    <div style="max-width:720px">
+      <div class="form-group">
+        <label>Titre de la leçon *</label>
+        <input type="text" id="lsnTitle" value="${esc(lesson.title)}" placeholder="ex: Introduction à Python"/>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Ordre</label>
+          <input type="number" id="lsnOrder" value="${lesson.order}" min="1"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>URL de la vidéo (bunny.net embed)</label>
+        <input type="url" id="lsnVideo" value="${esc(lesson.videoUrl||'')}" placeholder="https://iframe.mediadelivery.net/embed/…"/>
+        <p style="font-size:.75rem;color:var(--text3);margin-top:4px">Copiez l'URL embed depuis votre tableau de bord bunny.net</p>
+      </div>
+      <div class="form-group">
+        <label>Description (optionnel)</label>
+        <textarea id="lsnDesc" rows="3" placeholder="Résumé de la leçon…">${esc(lesson.description||'')}</textarea>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <p style="font-weight:600;font-size:.95rem">📋 Codes du cours</p>
+        <button class="btn btn-secondary btn-sm" id="addSnipBtn">+ Ajouter un code</button>
+      </div>
+      <div id="snipsContainer">
+        ${snips.map((s,i) => snippetEditorRow(s,i)).join('')}
+      </div>
+
+      <div class="divider"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-secondary" onclick="openChapter('${courseId}','${chapterId}')">Annuler</button>
+        <button class="btn btn-primary" id="saveLsnBtn">💾 Enregistrer la leçon</button>
+      </div>
+      <div id="lsnMsg" style="margin-top:10px"></div>
+    </div>`;
+
+  let snipCount = snips.length;
+
+  document.getElementById('addSnipBtn').addEventListener('click', () => {
+    const container = document.getElementById('snipsContainer');
+    const row = document.createElement('div');
+    row.innerHTML = snippetEditorRow({ title:'', language:'python', code:'' }, snipCount++);
+    container.appendChild(row.firstElementChild);
+  });
+
+  document.getElementById('saveLsnBtn').addEventListener('click', async () => {
+    const title   = document.getElementById('lsnTitle').value.trim();
+    const order   = parseInt(document.getElementById('lsnOrder').value) || 1;
+    const video   = document.getElementById('lsnVideo').value.trim();
+    const desc    = document.getElementById('lsnDesc').value.trim();
+    const msg     = document.getElementById('lsnMsg');
+    const btn     = document.getElementById('saveLsnBtn');
+
+    if (!title) { msg.innerHTML = '<div class="alert alert-error">Le titre est requis.</div>'; return; }
+
+    // collect snippets
+    const snippets = [];
+    document.querySelectorAll('.snip-row').forEach(row => {
+      const t = row.querySelector('.snip-title-in').value.trim();
+      const l = row.querySelector('.snip-lang-in').value;
+      const c = row.querySelector('.snip-code-in').value;
+      if (c.trim()) snippets.push({ id: uuid(), title: t||'Code', language: l, code: c });
+    });
+
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Enregistrement…';
+
+    const updatedLesson = { id: lesson.id, title, order, videoUrl: video, description: desc, codeSnippets: snippets };
+
+    const freshCourse = await getCourse(courseId);
+    const chs = freshCourse.chapters || [];
+    const chIdx = chs.findIndex(c => c.id === chapterId);
+    if (chIdx === -1) { msg.innerHTML = '<div class="alert alert-error">Chapitre introuvable.</div>'; btn.disabled = false; btn.innerHTML = '💾 Enregistrer la leçon'; return; }
+
+    const lsns = chs[chIdx].lessons || [];
+    const lIdx = lsns.findIndex(l => l.id === lesson.id);
+    if (lIdx === -1) lsns.push(updatedLesson); else lsns[lIdx] = updatedLesson;
+    chs[chIdx].lessons = lsns;
+
+    await updateDoc(doc(db,'courses',courseId), { chapters: chs });
+    delete coursesCache[courseId];
+
+    msg.innerHTML = '<div class="alert alert-success">✓ Leçon enregistrée avec succès !</div>';
+    btn.disabled = false; btn.innerHTML = '💾 Enregistrer la leçon';
+    setTimeout(() => openChapter(courseId, chapterId), 1200);
+  });
+};
+
+function snippetEditorRow(s, i) {
+  const langs = ['python','javascript','html','css','php','java','cpp','bash','sql','json','text'];
+  return `
+    <div class="snip-row" id="snip_${i}">
+      <div class="snip-row-head">
+        <input type="text" class="snip-title-in" value="${esc(s.title||'')}" placeholder="Titre (ex: main.py)" style="flex:1"/>
+        <select class="snip-lang-in" style="width:130px">
+          ${langs.map(l => `<option value="${l}" ${l===s.language?'selected':''}>${l}</option>`).join('')}
+        </select>
+        <button type="button" class="btn btn-danger btn-icon" onclick="this.closest('.snip-row').remove()" title="Supprimer">✕</button>
+      </div>
+      <textarea class="snip-code-in" rows="6" placeholder="Collez votre code ici…" style="font-family:'JetBrains Mono',monospace;font-size:.82rem">${esc(s.code||'')}</textarea>
+    </div>`;
+}
+
+// ── delete helpers ──
+window.deleteChapter = async (courseId, chapterId) => {
+  if (!confirm('Supprimer ce chapitre et toutes ses leçons ?')) return;
+  const course = await getCourse(courseId);
+  const chs = (course.chapters||[]).filter(c => c.id !== chapterId);
+  await updateDoc(doc(db,'courses',courseId), { chapters: chs });
+  delete coursesCache[courseId];
+  openCourse(courseId);
+};
+
+window.deleteLesson = async (courseId, chapterId, lessonId) => {
+  if (!confirm('Supprimer cette leçon ?')) return;
+  const course = await getCourse(courseId);
+  const chs = course.chapters || [];
+  const chIdx = chs.findIndex(c => c.id === chapterId);
+  if (chIdx === -1) return;
+  chs[chIdx].lessons = (chs[chIdx].lessons||[]).filter(l => l.id !== lessonId);
+  await updateDoc(doc(db,'courses',courseId), { chapters: chs });
+  delete coursesCache[courseId];
+  openChapter(courseId, chapterId);
+};
+
+window.deleteCourse = async (courseId) => {
+  if (!confirm('Supprimer ce cours et tout son contenu ?')) return;
+  await deleteDoc(doc(db,'courses',courseId));
+  delete coursesCache[courseId];
+  showCourseList();
+};
+
+// ── add course modal ──
+function showAddCourseModal() {
+  showModal(`
+    <div class="modal-overlay">
+      <div class="modal modal-sm">
+        <h3>📚 Nouveau cours</h3>
+        <div class="form-group">
+          <label>Titre du cours *</label>
+          <input type="text" id="newCourseTitle" placeholder="ex: Python pour débutants"/>
+        </div>
+        <div class="form-group">
+          <label>Description (optionnel)</label>
+          <textarea id="newCourseDesc" rows="2" placeholder="Brève description du cours…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Ordre d'affichage</label>
+          <input type="number" id="newCourseOrder" value="1" min="1"/>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+          <button class="btn btn-primary" id="saveCourseBtn">Créer</button>
+        </div>
+      </div>
+    </div>`);
+
+  document.getElementById('saveCourseBtn').addEventListener('click', async () => {
+    const title = document.getElementById('newCourseTitle').value.trim();
+    const desc  = document.getElementById('newCourseDesc').value.trim();
+    const order = parseInt(document.getElementById('newCourseOrder').value)||1;
+    if (!title) return;
+    const btn = document.getElementById('saveCourseBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    await addDoc(collection(db,'courses'), { title, description: desc, order, chapters: [], createdAt: serverTimestamp() });
+    closeModal(); showCourseList();
+  });
+}
+
+// ── add chapter modal ──
+function showAddChapterModal(courseId) {
+  showModal(`
+    <div class="modal-overlay">
+      <div class="modal modal-sm">
+        <h3>📑 Nouveau chapitre</h3>
+        <div class="form-group">
+          <label>Titre du chapitre *</label>
+          <input type="text" id="newChTitle" placeholder="ex: Chapitre 1 — Introduction"/>
+        </div>
+        <div class="form-group">
+          <label>Ordre</label>
+          <input type="number" id="newChOrder" value="1" min="1"/>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+          <button class="btn btn-primary" id="saveChBtn">Créer</button>
+        </div>
+      </div>
+    </div>`);
+
+  document.getElementById('saveChBtn').addEventListener('click', async () => {
+    const title = document.getElementById('newChTitle').value.trim();
+    const order = parseInt(document.getElementById('newChOrder').value)||1;
+    if (!title) return;
+    const btn = document.getElementById('saveChBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    const course = await getCourse(courseId);
+    const chs = course.chapters || [];
+    chs.push({ id: uuid(), title, order, lessons: [] });
+    await updateDoc(doc(db,'courses',courseId), { chapters: chs });
+    delete coursesCache[courseId];
+    closeModal(); openCourse(courseId);
+  });
+}
+
+// ── breadcrumb ──
+function setBreadcrumb(items) {
+  const bc = document.getElementById('breadcrumb');
+  bc.style.display = 'flex';
+  bc.innerHTML = items.map((item, i) => {
+    if (i < items.length - 1) {
+      return `<a onclick="${item.action}">${item.label}</a><span class="sep">›</span>`;
+    }
+    return `<span>${item.label}</span>`;
+  }).join('');
+}
+
+window.showCourseList = showCourseList;
+window.openCourse     = window.openCourse;
+window.openChapter    = window.openChapter;

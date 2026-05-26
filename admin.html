@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Administration</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>"/>
+</head>
+<body>
+
+<!-- ── Admin login modal ── -->
+<div id="authModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <h3>🔐 Accès Administrateur</h3>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="adminEmail" placeholder="admin@example.com"/>
+    </div>
+    <div class="form-group">
+      <label>Mot de passe</label>
+      <input type="password" id="adminPass" placeholder="Mot de passe"/>
+    </div>
+    <div id="authErr"></div>
+    <div class="modal-actions">
+      <a href="index.html" class="btn btn-secondary">Retour</a>
+      <button class="btn btn-primary" id="authBtn">Se connecter</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Admin panel ── -->
+<div id="adminApp" class="admin-layout" style="display:none">
+
+  <!-- Sidebar -->
+  <div class="admin-sidebar">
+    <div class="admin-logo">
+      <h1>🎓 Admin</h1>
+      <p id="adminEmailDisplay"></p>
+    </div>
+    <nav class="admin-nav">
+      <div class="admin-nav-item active" data-tab="dashboard">📊 Tableau de bord</div>
+      <div class="admin-nav-item" data-tab="codes">🔑 Codes d'accès</div>
+      <div class="admin-nav-item" data-tab="courses">📚 Contenu du cours</div>
+    </nav>
+    <div class="admin-sidebar-footer">
+      <button class="btn btn-secondary btn-sm" id="logoutBtn" style="width:100%">Déconnexion</button>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="admin-main">
+
+    <!-- Dashboard -->
+    <div id="tab-dashboard" class="tab-content active">
+      <div class="page-header"><h2>Tableau de bord</h2></div>
+      <div class="stats-grid" id="statsGrid"></div>
+      <h3 style="margin-bottom:14px;font-size:1rem;">Codes récents</h3>
+      <div class="table-wrap" id="recentCodesTable"></div>
+    </div>
+
+    <!-- Codes -->
+    <div id="tab-codes" class="tab-content">
+      <div class="page-header">
+        <h2>Codes d'accès</h2>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary" id="genMultiBtn">Générer plusieurs</button>
+          <button class="btn btn-primary"   id="addCodeBtn">+ Nouveau code</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Label</th>
+              <th>Statut</th>
+              <th>Utilisé le</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="codesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Courses -->
+    <div id="tab-courses" class="tab-content">
+      <div class="page-header">
+        <h2 id="coursePageTitle">Cours</h2>
+        <div class="page-header-actions" id="coursePageActions"></div>
+      </div>
+      <div id="breadcrumb" class="breadcrumb" style="display:none"></div>
+      <div id="coursesView"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Dynamic modals ── -->
+<div id="modalRoot"></div>
+
+<script type="module" src="js/admin.js"></script>
+</body>
+</html>
