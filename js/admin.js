@@ -312,40 +312,54 @@ async function showCourseList() {
     `<button class="btn btn-primary" id="addCourseBtn">+ Ajouter un cours</button>`;
   document.getElementById('addCourseBtn').addEventListener('click', showAddCourseModal);
 
-  const snap   = await getDocs(query(collection(db,'courses'), orderBy('order')));
-  const courses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  const view   = document.getElementById('coursesView');
+  const view = document.getElementById('coursesView');
+  view.innerHTML = '<div style="padding:24px;color:var(--text2);text-align:center">⏳ Chargement…</div>';
 
-  if (!courses.length) {
-    view.innerHTML = '<div class="empty-state"><div class="ei">📚</div><p>Aucun cours. Créez-en un !</p></div>';
-    return;
+  try {
+    // getDocs sans orderBy pour éviter les erreurs d'index Firestore
+    const snap    = await getDocs(collection(db, 'courses'));
+    const courses = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));   // tri côté client
+
+    if (!courses.length) {
+      view.innerHTML = '<div class="empty-state"><div class="ei">📚</div><p>Aucun cours. Créez-en un !</p></div>';
+      return;
+    }
+
+    view.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Titre du cours</th><th>Chapitres</th><th>Leçons</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${courses.map(c => {
+              const chs = c.chapters || [];
+              const lsn = chs.reduce((n, ch) => n + (ch.lessons || []).length, 0);
+              return `
+                <tr>
+                  <td style="color:var(--text3)">${c.order || 1}</td>
+                  <td><strong>${esc(c.title)}</strong>${c.description ? `<br><span style="font-size:.8rem;color:var(--text2)">${esc(c.description)}</span>` : ''}</td>
+                  <td>${chs.length}</td>
+                  <td>${lsn}</td>
+                  <td>
+                    <div class="td-actions">
+                      <button class="btn btn-secondary btn-sm" onclick="openCourse('${c.id}')">Gérer</button>
+                      <button class="btn btn-danger btn-sm"    onclick="deleteCourse('${c.id}')">Supprimer</button>
+                    </div>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    console.error('showCourseList:', e);
+    view.innerHTML = `
+      <div class="alert alert-error" style="margin:16px">
+        ❌ Impossible de charger les cours.<br>
+        <small style="opacity:.8">${e.message || e}</small>
+      </div>`;
   }
-
-  view.innerHTML = `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>#</th><th>Titre du cours</th><th>Chapitres</th><th>Leçons</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${courses.map(c => {
-            const chs = c.chapters||[];
-            const lsn = chs.reduce((n,ch) => n + (ch.lessons||[]).length, 0);
-            return `
-              <tr>
-                <td style="color:var(--text3)">${c.order||1}</td>
-                <td><strong>${esc(c.title)}</strong>${c.description ? `<br><span style="font-size:.8rem;color:var(--text2)">${esc(c.description)}</span>` : ''}</td>
-                <td>${chs.length}</td>
-                <td>${lsn}</td>
-                <td>
-                  <div class="td-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="openCourse('${c.id}')">Gérer</button>
-                    <button class="btn btn-danger btn-sm"    onclick="deleteCourse('${c.id}')">Supprimer</button>
-                  </div>
-                </td>
-              </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>`;
 }
 
 window.openCourse = async (courseId) => {
@@ -544,12 +558,17 @@ window.showLessonEditor = async (courseId, chapterId, lessonId) => {
     if (lIdx === -1) lsns.push(updatedLesson); else lsns[lIdx] = updatedLesson;
     chs[chIdx].lessons = lsns;
 
-    await updateDoc(doc(db,'courses',courseId), { chapters: chs });
-    delete coursesCache[courseId];
-
-    msg.innerHTML = '<div class="alert alert-success">✓ Leçon enregistrée avec succès !</div>';
-    btn.disabled = false; btn.innerHTML = '💾 Enregistrer la leçon';
-    setTimeout(() => openChapter(courseId, chapterId), 1200);
+    try {
+      await updateDoc(doc(db, 'courses', courseId), { chapters: chs });
+      delete coursesCache[courseId];
+      msg.innerHTML = '<div class="alert alert-success">✓ Leçon enregistrée avec succès !</div>';
+      btn.disabled = false; btn.innerHTML = '💾 Enregistrer la leçon';
+      setTimeout(() => openChapter(courseId, chapterId), 1200);
+    } catch (e) {
+      console.error('saveLesson:', e);
+      msg.innerHTML = `<div class="alert alert-error">❌ Erreur : ${e.message || e}</div>`;
+      btn.disabled = false; btn.innerHTML = '💾 Enregistrer la leçon';
+    }
   });
 };
 
@@ -615,6 +634,7 @@ function showAddCourseModal() {
           <label>Ordre d'affichage</label>
           <input type="number" id="newCourseOrder" value="1" min="1"/>
         </div>
+        <div id="saveCourseErr"></div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
           <button class="btn btn-primary" id="saveCourseBtn">Créer</button>
@@ -623,14 +643,28 @@ function showAddCourseModal() {
     </div>`);
 
   document.getElementById('saveCourseBtn').addEventListener('click', async () => {
-    const title = document.getElementById('newCourseTitle').value.trim();
-    const desc  = document.getElementById('newCourseDesc').value.trim();
-    const order = parseInt(document.getElementById('newCourseOrder').value)||1;
-    if (!title) return;
+    const title  = document.getElementById('newCourseTitle').value.trim();
+    const desc   = document.getElementById('newCourseDesc').value.trim();
+    const order  = parseInt(document.getElementById('newCourseOrder').value) || 1;
+    const errDiv = document.getElementById('saveCourseErr');
+    if (!title) {
+      errDiv.innerHTML = '<div class="alert alert-error">Le titre est requis.</div>';
+      return;
+    }
     const btn = document.getElementById('saveCourseBtn');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-    await addDoc(collection(db,'courses'), { title, description: desc, order, chapters: [], createdAt: serverTimestamp() });
-    closeModal(); showCourseList();
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Création…';
+    errDiv.innerHTML = '';
+    try {
+      await addDoc(collection(db, 'courses'), {
+        title, description: desc, order, chapters: [], createdAt: serverTimestamp()
+      });
+      closeModal();
+      showCourseList();
+    } catch (e) {
+      console.error('addDoc cours:', e);
+      errDiv.innerHTML = `<div class="alert alert-error">❌ Erreur : ${e.message || e}</div>`;
+      btn.disabled = false; btn.innerHTML = 'Créer';
+    }
   });
 }
 
@@ -648,6 +682,7 @@ function showAddChapterModal(courseId) {
           <label>Ordre</label>
           <input type="number" id="newChOrder" value="1" min="1"/>
         </div>
+        <div id="saveChErr"></div>
         <div class="modal-actions">
           <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
           <button class="btn btn-primary" id="saveChBtn">Créer</button>
@@ -656,17 +691,29 @@ function showAddChapterModal(courseId) {
     </div>`);
 
   document.getElementById('saveChBtn').addEventListener('click', async () => {
-    const title = document.getElementById('newChTitle').value.trim();
-    const order = parseInt(document.getElementById('newChOrder').value)||1;
-    if (!title) return;
+    const title  = document.getElementById('newChTitle').value.trim();
+    const order  = parseInt(document.getElementById('newChOrder').value) || 1;
+    const errDiv = document.getElementById('saveChErr');
+    if (!title) {
+      errDiv.innerHTML = '<div class="alert alert-error">Le titre est requis.</div>';
+      return;
+    }
     const btn = document.getElementById('saveChBtn');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-    const course = await getCourse(courseId);
-    const chs = course.chapters || [];
-    chs.push({ id: uuid(), title, order, lessons: [] });
-    await updateDoc(doc(db,'courses',courseId), { chapters: chs });
-    delete coursesCache[courseId];
-    closeModal(); openCourse(courseId);
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Création…';
+    errDiv.innerHTML = '';
+    try {
+      const course = await getCourse(courseId);
+      const chs = course.chapters || [];
+      chs.push({ id: uuid(), title, order, lessons: [] });
+      await updateDoc(doc(db, 'courses', courseId), { chapters: chs });
+      delete coursesCache[courseId];
+      closeModal();
+      openCourse(courseId);
+    } catch (e) {
+      console.error('addChapter:', e);
+      errDiv.innerHTML = `<div class="alert alert-error">❌ Erreur : ${e.message || e}</div>`;
+      btn.disabled = false; btn.innerHTML = 'Créer';
+    }
   });
 }
 
