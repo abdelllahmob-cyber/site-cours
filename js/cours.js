@@ -1,10 +1,7 @@
-import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { FIREBASE_CONFIG, SITE_NAME } from './config.js';
+import { createClient }     from 'https://esm.sh/@supabase/supabase-js@2';
+import { SUPABASE_URL, SUPABASE_ANON, SITE_NAME } from './config.js';
 
-const app = initializeApp(FIREBASE_CONFIG);
-const db  = getFirestore(app);
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── auth guard ──
 async function checkAuth() {
@@ -12,8 +9,11 @@ async function checkAuth() {
   const token  = localStorage.getItem('_tok');
   if (!codeId || !token) { location.href = 'index.html'; return false; }
   try {
-    const snap = await getDoc(doc(db, 'codes', codeId));
-    if (snap.exists() && snap.data().active && snap.data().sessionToken === token) return true;
+    const { data } = await sb.from('codes')
+      .select('active, session_token')
+      .eq('id', codeId)
+      .single();
+    if (data && data.active && data.session_token === token) return true;
   } catch(_) {}
   ['_cid','_tok','_code'].forEach(k => localStorage.removeItem(k));
   location.href = 'index.html';
@@ -68,12 +68,10 @@ function renderLesson(lesson, el) {
   body.innerHTML = html;
   body.scrollTop = 0;
 
-  // highlight.js
   if (window.hljs) {
     body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
   }
 
-  // copy buttons
   body.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const code = btn.closest('.snippet-body').querySelector('code').textContent;
@@ -90,22 +88,30 @@ async function buildSidebar() {
   const nav = document.getElementById('sidebarNav');
   nav.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:.85rem">Chargement…</div>';
 
-  const snap = await getDocs(query(collection(db,'courses'), orderBy('order')));
+  const { data: courses, error } = await sb.from('courses')
+    .select('*')
+    .order('order', { ascending: true });
+
+  if (error) {
+    nav.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:.85rem">⚠️ Erreur de chargement.</div>';
+    console.error('buildSidebar:', error);
+    return;
+  }
+
   nav.innerHTML = '';
 
-  if (snap.empty) {
+  if (!courses || !courses.length) {
     nav.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:.85rem">Aucun contenu disponible.</div>';
     return;
   }
 
   let firstLesson = null, firstEl = null;
 
-  snap.forEach(courseDoc => {
-    const course   = courseDoc.data();
-    const chapters = (course.chapters || []).slice().sort((a,b) => a.order - b.order);
+  courses.forEach(course => {
+    const chapters = (course.chapters || []).slice().sort((a, b) => a.order - b.order);
 
     chapters.forEach((ch, ci) => {
-      const lessons = (ch.lessons || []).slice().sort((a,b) => a.order - b.order);
+      const lessons = (ch.lessons || []).slice().sort((a, b) => a.order - b.order);
       const chEl = document.createElement('div');
       chEl.className = 'chapter-item';
 
@@ -131,7 +137,7 @@ async function buildSidebar() {
       });
 
       chEl.querySelectorAll('.lesson-item').forEach(li => {
-        const lId = li.dataset.id;
+        const lId   = li.dataset.id;
         const lesson = lessons.find(x => x.id === lId);
         if (!firstLesson) { firstLesson = lesson; firstEl = li; }
         li.addEventListener('click', () => renderLesson(lesson, li));
@@ -141,9 +147,10 @@ async function buildSidebar() {
     });
   });
 
-  // open first chapter by default
+  // open first chapter + load first lesson
   const firstChapter = nav.querySelector('.chapter-item');
   if (firstChapter) firstChapter.classList.add('open');
+  if (firstLesson && firstEl) renderLesson(firstLesson, firstEl);
 }
 
 // ── periodic revocation check (every 4 min) ──

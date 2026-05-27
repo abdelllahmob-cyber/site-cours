@@ -42,22 +42,18 @@
 </div>
 
 <script type="module">
-import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, query, where, getDocs,
-         doc, getDoc, updateDoc, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { FIREBASE_CONFIG, SITE_NAME } from './js/config.js';
+import { createClient }     from 'https://esm.sh/@supabase/supabase-js@2';
+import { SUPABASE_URL, SUPABASE_ANON, SITE_NAME } from './js/config.js';
 
-const app = initializeApp(FIREBASE_CONFIG);
-const db  = getFirestore(app);
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 document.getElementById('siteTitleEl').textContent = SITE_NAME;
 
-// ── device fingerprint (stored in localStorage permanently) ──
+// ── device fingerprint ──
 function getDeviceId() {
   let id = localStorage.getItem('_did');
   if (!id) {
-    id = 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    id = 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     localStorage.setItem('_did', id);
   }
   return id;
@@ -65,7 +61,7 @@ function getDeviceId() {
 
 function randToken() {
   return Array.from(crypto.getRandomValues(new Uint8Array(24)))
-    .map(b => b.toString(16).padStart(2,'0')).join('');
+    .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function showMsg(text, type = 'error') {
@@ -79,8 +75,11 @@ async function checkSession() {
   const token  = localStorage.getItem('_tok');
   if (!codeId || !token) return false;
   try {
-    const snap = await getDoc(doc(db, 'codes', codeId));
-    if (snap.exists() && snap.data().active && snap.data().sessionToken === token) {
+    const { data } = await sb.from('codes')
+      .select('active, session_token')
+      .eq('id', codeId)
+      .single();
+    if (data && data.active && data.session_token === token) {
       location.href = 'cours.html';
       return true;
     }
@@ -91,32 +90,35 @@ async function checkSession() {
 
 // ── login ──
 async function doLogin() {
-  const raw  = document.getElementById('codeInput').value.trim().toUpperCase();
-  const btn  = document.getElementById('loginBtn');
-  if (!raw) { showMsg('Veuillez entrer votre code d\'accès.'); return; }
+  const raw = document.getElementById('codeInput').value.trim().toUpperCase();
+  const btn = document.getElementById('loginBtn');
+  if (!raw) { showMsg("Veuillez entrer votre code d'accès."); return; }
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Vérification…';
   document.getElementById('msgBox').innerHTML = '';
 
   try {
-    const q    = query(collection(db,'codes'), where('code','==',raw), where('active','==',true));
-    const snap = await getDocs(q);
+    const { data: rows, error } = await sb.from('codes')
+      .select('*')
+      .eq('code', raw)
+      .eq('active', true);
 
-    if (snap.empty) {
+    if (error) throw error;
+
+    if (!rows || !rows.length) {
       showMsg('Code invalide ou désactivé. Vérifiez et réessayez.');
       return;
     }
 
-    const codeDoc  = snap.docs[0];
-    const data     = codeDoc.data();
+    const codeRow  = rows[0];
     const deviceId = getDeviceId();
 
-    if (data.used) {
-      if (data.deviceId === deviceId) {
+    if (codeRow.used) {
+      if (codeRow.device_id === deviceId) {
         // same device → restore session
-        localStorage.setItem('_cid',  codeDoc.id);
-        localStorage.setItem('_tok',  data.sessionToken);
+        localStorage.setItem('_cid',  codeRow.id);
+        localStorage.setItem('_tok',  codeRow.session_token);
         localStorage.setItem('_code', raw);
         location.href = 'cours.html';
       } else {
@@ -127,11 +129,18 @@ async function doLogin() {
 
     // first activation
     const token = randToken();
-    await updateDoc(doc(db,'codes',codeDoc.id), {
-      used: true, sessionToken: token,
-      deviceId, usedAt: serverTimestamp()
-    });
-    localStorage.setItem('_cid',  codeDoc.id);
+    const { error: updErr } = await sb.from('codes')
+      .update({
+        used: true,
+        session_token: token,
+        device_id: deviceId,
+        used_at: new Date().toISOString()
+      })
+      .eq('id', codeRow.id);
+
+    if (updErr) throw updErr;
+
+    localStorage.setItem('_cid',  codeRow.id);
     localStorage.setItem('_tok',  token);
     localStorage.setItem('_code', raw);
     location.href = 'cours.html';
