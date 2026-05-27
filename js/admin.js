@@ -6,7 +6,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ────────────────────────────────────────────
 // كلمة المرور — مول السيت
 // ────────────────────────────────────────────
-const OWNER_PASSWORD = 'سبع';
+const OWNER_PASSWORD = 'sba3';
 const SESSION_KEY    = 'admin_auth_ok';
 
 // ────────────────────────────────────────────
