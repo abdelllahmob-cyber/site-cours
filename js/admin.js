@@ -512,10 +512,28 @@ window.showLessonEditor = async (courseId, chapterId, lessonId) => {
         </div>
       </div>
       <div class="form-group">
-        <label>URL de la vidéo (bunny.net embed)</label>
-        <input type="url" id="lsnVideo" value="${esc(lesson.videoUrl || '')}"
-          placeholder="https://iframe.mediadelivery.net/embed/…"/>
-        <p style="font-size:.75rem;color:var(--text3);margin-top:4px">Copiez l'URL embed depuis votre tableau de bord bunny.net</p>
+        <label>🎥 URL الفيديو — Bunny.net</label>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <input type="url" id="lsnVideo" value="${esc(lesson.videoUrl || '')}"
+            placeholder="https://iframe.mediadelivery.net/embed/LIBRARY_ID/VIDEO_ID"
+            style="flex:1"/>
+          <button type="button" class="btn btn-secondary btn-sm" id="previewVideoBtn"
+            style="white-space:nowrap;margin-top:0">👁 معاينة</button>
+        </div>
+        <p style="font-size:.75rem;color:var(--text3);margin-top:6px">
+          من Bunny.net → المكتبة → الفيديو → <strong style="color:var(--accent3)">Embed</strong> → انسخ الـ iframe src
+        </p>
+      </div>
+
+      <!-- Video preview -->
+      <div id="videoPreviewBox" style="${lesson.videoUrl ? '' : 'display:none'}">
+        <div class="video-wrap" style="margin-bottom:18px">
+          <iframe id="videoPreviewFrame"
+            src="${esc(lesson.videoUrl || '')}"
+            loading="lazy"
+            allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+            allowfullscreen></iframe>
+        </div>
       </div>
       <div class="form-group">
         <label>Description (optionnel)</label>
@@ -541,6 +559,29 @@ window.showLessonEditor = async (courseId, chapterId, lessonId) => {
     </div>`;
 
   let snipCount = snips.length;
+
+  // ── video preview ──
+  document.getElementById('previewVideoBtn').addEventListener('click', () => {
+    const url = document.getElementById('lsnVideo').value.trim();
+    const box = document.getElementById('videoPreviewBox');
+    const frm = document.getElementById('videoPreviewFrame');
+    if (!url) {
+      box.style.display = 'none';
+      return;
+    }
+    frm.src = url;
+    box.style.display = 'block';
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  // تحديث Preview تلقائياً عند تغيير الـ URL
+  document.getElementById('lsnVideo').addEventListener('change', () => {
+    const url = document.getElementById('lsnVideo').value.trim();
+    const box = document.getElementById('videoPreviewBox');
+    const frm = document.getElementById('videoPreviewFrame');
+    if (url) { frm.src = url; box.style.display = 'block'; }
+    else      { box.style.display = 'none'; frm.src = ''; }
+  });
 
   document.getElementById('addSnipBtn').addEventListener('click', () => {
     const container = document.getElementById('snipsContainer');

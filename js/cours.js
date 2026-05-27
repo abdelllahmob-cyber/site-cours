@@ -39,8 +39,12 @@ function renderLesson(lesson, el) {
   if (lesson.videoUrl) {
     html += `
       <div class="video-wrap">
-        <iframe src="${esc(lesson.videoUrl)}"
-          allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>
+        <iframe
+          src="${esc(lesson.videoUrl)}"
+          loading="lazy"
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen
+          referrerpolicy="origin"></iframe>
       </div>`;
   }
 
